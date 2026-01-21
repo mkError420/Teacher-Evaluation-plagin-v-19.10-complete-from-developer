@@ -298,6 +298,8 @@ function tes_render_advisor_dashboard_content($current_advisor, $logout_url) {
                 <button id="tes-download-pdf" class="button" style="background: #2271b1; color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-left: 10px;">Download PDF</button>
             </div>
             <div id="tes-pdf-content" style="padding: 20px; background: #fff;">
+                <h2 style="text-align: center;background: #0c273d; color: #fff; padding: 10px 0;margin-top: 0; margin-bottom: 15px;">Rangpur Community Medical College Hospital (RCMCH)</h2>
+                <h3 style="text-align: center; margin-top: 0; margin-bottom: 18px; background: #42525f; color: #fff;">Category of The Medical College:  Non govt</h3>
                 <h2 style="margin-top: 0;"><?php echo esc_html($survey_details->title); ?> - Results</h2>
                 <p><strong>Date:</strong> <?php echo date('F j, Y'); ?></p>
         <?php

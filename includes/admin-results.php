@@ -210,6 +210,8 @@ function tes_results_page() {
 
             if ($overall_avg !== null) {
                 echo '<div style="background: #f1f1f1; padding: 15px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center;">';
+                echo '<h2 style="margin: 0 0 10px 0; color: #333;">Rangpur Community Medical College Hospital (RCMCH)</h2>';
+                echo '<h3 style="margin: 0 0 10px 0; color: #555;">Category of The Medical College: Non govt.</h3>';
                 if ($survey_details) {
                     echo '<h2 style="margin: 0 0 10px 0; color: #0073aa;">Teacher: ' . esc_html($survey_details->name) . '</h2>';
                 }
