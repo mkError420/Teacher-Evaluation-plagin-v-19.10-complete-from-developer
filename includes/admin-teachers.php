@@ -162,34 +162,82 @@ function tes_teachers_page() {
     }
 
     if (isset($_GET['delete_department'])) {
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'tes_delete_department')) {
+            wp_die('Security check failed');
+        }
         $dept_to_delete = sanitize_text_field($_GET['delete_department']);
 
-        // Check if department has teachers
-        $teacher_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM $table WHERE department = %s",
-            $dept_to_delete
-        ));
+        // Update teachers to remove this department
+        $wpdb->update(
+            $table,
+            ['department' => ''],
+            ['department' => $dept_to_delete]
+        );
 
-        if ($teacher_count > 0) {
-            echo '<div class="error notice"><p>Cannot delete department "' . esc_html($dept_to_delete) . '". It still has ' . $teacher_count . ' teacher(s). Please reassign or remove all teachers first.</p></div>';
-        } else {
-            // Department is empty, but since it's just a string, there's nothing to delete
-            // It will automatically disappear from dropdowns
-            echo '<div class="updated notice"><p>Department "' . esc_html($dept_to_delete) . '" is already empty and will no longer appear in dropdowns.</p></div>';
-        }
+        // Update students to remove this department
+        $wpdb->update(
+            $wpdb->prefix . 'tes_students',
+            ['department' => ''],
+            ['department' => $dept_to_delete]
+        );
+
+        echo '<div class="updated notice"><p>Department "' . esc_html($dept_to_delete) . '" deleted. Teachers and Students in this department are now unassigned.</p></div>';
     }
 
-    // Handle Search
+    // Bulk Delete Departments
+    if (isset($_POST['tes_bulk_delete_departments']) && !empty($_POST['department_names'])) {
+        if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'tes_bulk_delete_departments_nonce')) {
+            wp_die('Security check failed');
+        }
+        
+        $depts = array_map('sanitize_text_field', $_POST['department_names']);
+        $count = 0;
+        
+        foreach ($depts as $dept) {
+            $wpdb->update($table, ['department' => ''], ['department' => $dept]);
+            $wpdb->update($wpdb->prefix . 'tes_students', ['department' => ''], ['department' => $dept]);
+            $count++;
+        }
+        
+        echo '<div class="updated notice"><p>' . $count . ' departments deleted. Teachers and Students unassigned.</p></div>';
+    }
+
+    // Handle Search and Filtering
     $search_term = isset($_GET['s']) ? sanitize_text_field($_GET['s']) : '';
+    $filter_phase = isset($_GET['filter_phase']) ? sanitize_text_field($_GET['filter_phase']) : '';
+    $filter_class = isset($_GET['filter_class']) ? sanitize_text_field($_GET['filter_class']) : '';
+
     $sql = "SELECT * FROM $table";
+    $where_clauses = [];
+    $params = [];
 
     if (!empty($search_term)) {
         $like = '%' . $wpdb->esc_like($search_term) . '%';
-        $sql .= $wpdb->prepare(" WHERE name LIKE %s OR department LIKE %s OR teacher_id_number LIKE %s OR phase LIKE %s OR class_name LIKE %s", $like, $like, $like, $like, $like);
+        $where_clauses[] = "(name LIKE %s OR department LIKE %s OR teacher_id_number LIKE %s OR phase LIKE %s OR class_name LIKE %s)";
+        array_push($params, $like, $like, $like, $like, $like);
     }
     
+    if (!empty($filter_phase)) {
+        $where_clauses[] = "phase = %s";
+        $params[] = $filter_phase;
+    }
+
+    if (!empty($filter_class)) {
+        $where_clauses[] = "class_name = %s";
+        $params[] = $filter_class;
+    }
+
+    if (!empty($where_clauses)) {
+        $sql .= " WHERE " . implode(' AND ', $where_clauses);
+    }
+
     $sql .= " ORDER BY name ASC";
-    $teachers = $wpdb->get_results($sql);
+    
+    if (!empty($params)) {
+        $teachers = $wpdb->get_results($wpdb->prepare($sql, ...$params));
+    } else {
+        $teachers = $wpdb->get_results($sql);
+    }
 
 
     // Get unique departments for dropdown
@@ -330,12 +378,27 @@ function tes_teachers_page() {
 
         <form method="get" style="margin-bottom: 15px;">
             <input type="hidden" name="page" value="tes-teachers">
+            
+            <select name="filter_phase" style="margin-right: 5px;">
+                <option value="">All Phases</option>
+                <?php foreach ($phases as $ph): ?>
+                    <option value="<?php echo esc_attr($ph); ?>" <?php selected($filter_phase, $ph); ?>><?php echo esc_html($ph); ?></option>
+                <?php endforeach; ?>
+            </select>
+
+            <select name="filter_class" style="margin-right: 5px;">
+                <option value="">All Classes</option>
+                <?php foreach ($classes as $cls): ?>
+                    <option value="<?php echo esc_attr($cls); ?>" <?php selected($filter_class, $cls); ?>><?php echo esc_html($cls); ?></option>
+                <?php endforeach; ?>
+            </select>
+
             <div style="position: relative; display: inline-block; width: 300px;">
                 <input type="text" name="s" id="tes_teacher_search_input" value="<?php echo esc_attr($search_term); ?>" placeholder="Search by Name, ID, Dept, Phase or Class" style="width: 100%;" autocomplete="off">
                 <div id="tes_teacher_search_suggestions" style="display:none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ccd0d4; z-index: 1000; max-height: 300px; overflow-y: auto; box-shadow: 0 4px 5px rgba(0,0,0,0.1);"></div>
             </div>
-            <button type="submit" class="button button-secondary">Search</button>
-            <?php if (!empty($search_term)): ?>
+            <button type="submit" class="button button-secondary">Filter</button>
+            <?php if (!empty($search_term) || !empty($filter_phase) || !empty($filter_class)): ?>
                 <a href="<?php echo admin_url('admin.php?page=tes-teachers'); ?>" class="button">Reset</a>
             <?php endif; ?>
         </form>
@@ -349,6 +412,14 @@ function tes_teachers_page() {
             </p>
             
             <form id="tes-import-teacher-form" enctype="multipart/form-data">
+                <div style="margin-bottom: 10px;">
+                    <select name="import_department" style="width: 100%; max-width: 300px;">
+                        <option value="">Select Department (Optional - Overrides CSV)</option>
+                        <?php foreach ($departments as $dept): ?>
+                            <option value="<?php echo esc_attr($dept); ?>"><?php echo esc_html($dept); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <input type="file" name="import_file" accept=".csv" required>
                 <button type="submit" class="button button-primary">Import Teachers</button>
                 <span class="spinner" style="float: none; margin-top: 0;"></span>
@@ -358,6 +429,8 @@ function tes_teachers_page() {
         </div>
 
         <h2>All Teachers</h2>
+
+        <button type="button" id="tes-download-teachers-csv" class="button button-primary" style="margin-bottom: 15px;" disabled>Download Selected CSV</button>
 
         <form method="post">
         <?php wp_nonce_field('tes_bulk_delete_teachers'); ?>
@@ -426,9 +499,17 @@ function tes_teachers_page() {
         ?>
 
         <?php if ($dept_stats): ?>
+            <form method="post">
+            <?php wp_nonce_field('tes_bulk_delete_departments_nonce'); ?>
+            <div class="tablenav top" style="padding: 10px 0;">
+                <div class="alignleft actions">
+                    <button type="submit" name="tes_bulk_delete_departments" value="delete" class="button button-secondary" onclick="return confirm('Are you sure you want to delete selected departments? Teachers and Students will be unassigned.');">Delete Selected</button>
+                </div>
+            </div>
             <table class="widefat striped">
                 <thead>
                     <tr>
+                        <td id="cb" class="manage-column column-cb check-column"><input type="checkbox" id="cb-select-all-depts"></td>
                         <th>Department Name</th>
                         <th>Number of Teachers</th>
                         <th>Actions</th>
@@ -437,6 +518,7 @@ function tes_teachers_page() {
                 <tbody>
                     <?php foreach ($dept_stats as $stat): ?>
                         <tr>
+                            <th scope="row" class="check-column"><input type="checkbox" name="department_names[]" value="<?php echo esc_attr($stat->department); ?>"></th>
                             <td><?php echo esc_html($stat->department); ?></td>
                             <td><?php echo esc_html($stat->teacher_count); ?></td>
                             <td>
@@ -445,20 +527,17 @@ function tes_teachers_page() {
                                         style="margin-right: 5px;">
                                     Rename
                                 </button>
-                                <?php if ($stat->teacher_count == 0): ?>
                                     <a class="button button-secondary"
-                                       href="?page=tes-teachers&delete_department=<?php echo urlencode($stat->department); ?>"
-                                       onclick="return confirm('Are you sure you want to delete this empty department?');">
+                                       href="<?php echo wp_nonce_url('?page=tes-teachers&delete_department=' . urlencode($stat->department), 'tes_delete_department'); ?>"
+                                       onclick="return confirm('Are you sure you want to delete this department? Teachers and Students will be unassigned.');">
                                        Delete
                                     </a>
-                                <?php else: ?>
-                                    <span style="color: #999;">Delete (reassign teachers first)</span>
-                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </form>
         <?php else: ?>
             <p>No departments found.</p>
         <?php endif; ?>
@@ -641,10 +720,72 @@ function tes_teachers_page() {
                 }
             });
 
+            // CSV Download Logic
+            $('#tes-download-teachers-csv').on('click', function() {
+                var csv = [];
+                var header = ["Teacher ID", "Teacher Name", "Department", "Phase", "Class", "Date"];
+                csv.push(header.join(","));
+
+                $('table.widefat tbody tr').each(function() {
+                    var $row = $(this);
+                    var checkbox = $row.find('input[name="teacher_ids[]"]');
+                    
+                    if (checkbox.length && checkbox.is(':checked')) {
+                        var rowData = [];
+                        var $cells = $row.find('td');
+                        
+                        // Extract text and handle CSV escaping
+                        rowData.push('"' + $cells.eq(0).text().trim().replace(/"/g, '""') + '"'); // Teacher ID
+                        rowData.push('"' + $cells.eq(1).text().trim().replace(/"/g, '""') + '"'); // Name
+                        rowData.push('"' + $cells.eq(2).text().trim().replace(/"/g, '""') + '"'); // Department
+                        rowData.push('"' + $cells.eq(3).text().trim().replace(/"/g, '""') + '"'); // Phase
+                        rowData.push('"' + $cells.eq(4).text().trim().replace(/"/g, '""') + '"'); // Class
+                        rowData.push('"' + $cells.eq(5).text().trim().replace(/"/g, '""') + '"'); // Date
+                        
+                        csv.push(rowData.join(","));
+                    }
+                });
+
+                if (csv.length <= 1) {
+                    alert('Please select at least one teacher.');
+                    return;
+                }
+
+                var csvFile = new Blob([csv.join("\n")], {type: "text/csv"});
+                var downloadLink = document.createElement("a");
+                downloadLink.download = "teachers_list.csv";
+                downloadLink.href = window.URL.createObjectURL(csvFile);
+                downloadLink.style.display = "none";
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+            });
+
+            function updateDownloadButton() {
+                var checkedCount = $('input[name="teacher_ids[]"]:checked').length;
+                var btn = $('#tes-download-teachers-csv');
+                if (checkedCount > 0) {
+                    btn.prop('disabled', false);
+                    btn.text('Download Selected CSV (' + checkedCount + ')');
+                } else {
+                    btn.prop('disabled', true);
+                    btn.text('Download Selected CSV');
+                }
+            }
+
+            $(document).on('change', 'input[name="teacher_ids[]"]', updateDownloadButton);
+
             // Select All Checkbox
             $('#cb-select-all-1').on('click', function() {
                 var checked = this.checked;
                 $('input[name="teacher_ids[]"]').prop('checked', checked);
+                updateDownloadButton();
+            });
+
+            // Select All Departments Checkbox
+            $('#cb-select-all-depts').on('click', function() {
+                var checked = this.checked;
+                $('input[name="department_names[]"]').prop('checked', checked);
             });
 
             // Teacher search autocomplete
@@ -708,6 +849,8 @@ function tes_teachers_page() {
                     suggestionsBox.hide();
                 }
             });
+
+            updateDownloadButton();
         });
     </script>
 

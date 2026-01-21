@@ -547,6 +547,8 @@ function tes_import_teachers() {
         wp_send_json_error('No valid columns found. Allowed headers: Name, Department, Teacher ID, Phase, Class.');
     }
 
+    $import_department = isset($_POST['import_department']) ? sanitize_text_field($_POST['import_department']) : '';
+
     $imported = 0;
     while (($data = fgetcsv($handle)) !== false) {
         $insert_data = [];
@@ -557,6 +559,10 @@ function tes_import_teachers() {
         }
 
         if (!empty($insert_data) && !empty($insert_data['name'])) {
+            if (!empty($import_department)) {
+                $insert_data['department'] = $import_department;
+            }
+
             if ($wpdb->insert($table_name, $insert_data)) {
                 $imported++;
             }
